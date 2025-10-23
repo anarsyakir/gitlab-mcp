@@ -1,0 +1,8 @@
+services:
+  gitlab-mcp:
+    build: .
+    environment:
+      GITLAB_BASE_URL: ${GITLAB_BASE_URL}
+      GITLAB_TOKEN: ${GITLAB_TOKEN}
+    stdin_open: true
+    tty: true
