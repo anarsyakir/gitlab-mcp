@@ -21,6 +21,13 @@ import {
   createIssueNote,
   updateIssueNote,
   deleteIssueNote,
+  listMergeRequests,
+  getMergeRequest,
+  getMergeRequestChanges,
+  listMergeRequestDiffs,
+  listMergeRequestNotes,
+  createMergeRequestNote,
+  getWorkItem,
 } from "./gitlab.js";
 
 const server = new McpServer(
@@ -249,6 +256,101 @@ server.registerTool(
     },
   },
   async (input) => jsonResult(await deleteIssueNote(input)),
+);
+
+server.registerTool(
+  "listMergeRequests",
+  {
+    description:
+      "List merge requests for a project. Optionally filter by state (opened/closed/locked/merged) or a search term.",
+    inputSchema: {
+      projectId: z.string(),
+      state: z.enum(["opened", "closed", "locked", "merged"]).optional(),
+      search: z.string().optional(),
+    },
+  },
+  async (input) => jsonResult(await listMergeRequests(input)),
+);
+
+server.registerTool(
+  "getMergeRequest",
+  {
+    description:
+      "Retrieve details of a single merge request within a project by providing the project ID and the merge request IID.",
+    inputSchema: {
+      projectId: z.string(),
+      mergeRequestIid: z.number().int(),
+    },
+  },
+  async (input) => jsonResult(await getMergeRequest(input)),
+);
+
+server.registerTool(
+  "getMergeRequestChanges",
+  {
+    description:
+      "Retrieve the file-by-file diff/changes for a merge request.",
+    inputSchema: {
+      projectId: z.string(),
+      mergeRequestIid: z.number().int(),
+    },
+  },
+  async (input) => jsonResult(await getMergeRequestChanges(input)),
+);
+
+server.registerTool(
+  "listMergeRequestDiffs",
+  {
+    description:
+      "List the merge request diff versions/entries. Useful when getMergeRequestChanges truncates a large diff.",
+    inputSchema: {
+      projectId: z.string(),
+      mergeRequestIid: z.number().int(),
+    },
+  },
+  async (input) => jsonResult(await listMergeRequestDiffs(input)),
+);
+
+server.registerTool(
+  "listMergeRequestNotes",
+  {
+    description: "List notes (comments) for a merge request.",
+    inputSchema: {
+      projectId: z.string(),
+      mergeRequestIid: z.number().int(),
+      sort: z.enum(["asc", "desc"]).optional(),
+      orderBy: z.enum(["created_at", "updated_at"]).optional(),
+    },
+  },
+  async (input) => jsonResult(await listMergeRequestNotes(input)),
+);
+
+server.registerTool(
+  "createMergeRequestNote",
+  {
+    description:
+      "Add a new note (comment) to a merge request. Provide the comment body and optionally mark it as internal.",
+    inputSchema: {
+      projectId: z.string(),
+      mergeRequestIid: z.number().int(),
+      body: z.string(),
+      internal: z.boolean().optional(),
+    },
+  },
+  async (input) => jsonResult(await createMergeRequestNote(input)),
+);
+
+server.registerTool(
+  "getWorkItem",
+  {
+    description:
+      "Retrieve a single GitLab work item (the unified issue/epic/task type) by project path and work item IID, via the GraphQL API.",
+    inputSchema: {
+      projectPath: z.string(),
+      workItemIid: z.union([z.string(), z.number()]),
+    },
+  },
+  async (input) => jsonResult(await getWorkItem(input)),
 );
 
 const projectResourceTemplate = new ResourceTemplate(

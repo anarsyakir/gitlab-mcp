@@ -41,10 +41,18 @@ async function apiFetch(path: string, init: ApiRequestInit = {}): Promise<any> {
   const { body: initBody, headers: initHeaders, ...restInit } = init;
 
   const headers = new Headers(initHeaders ?? undefined);
-  // Use GitLab's "PRIVATE-TOKEN" header for personal access tokens. Fall back
-  // to Bearer if the caller explicitly sets Authorization.
-  if (TOKEN && !headers.has("Authorization")) {
-    headers.set("PRIVATE-TOKEN", TOKEN);
+  const hasExplicitAuth =
+    headers.has("Authorization") || headers.has("PRIVATE-TOKEN");
+  let authMode: "none" | "private-token" | "bearer" = "none";
+  // Prefer PRIVATE-TOKEN for PAT (glpat-*), Bearer for OAuth/service tokens.
+  if (TOKEN && !hasExplicitAuth) {
+    if (TOKEN.startsWith("glpat-")) {
+      headers.set("PRIVATE-TOKEN", TOKEN);
+      authMode = "private-token";
+    } else {
+      headers.set("Authorization", `Bearer ${TOKEN}`);
+      authMode = "bearer";
+    }
   }
 
   // If the body is an object, JSON‑encode it and set appropriate header.
@@ -81,7 +89,26 @@ async function apiFetch(path: string, init: ApiRequestInit = {}): Promise<any> {
     }
   }
 
-  const res = await fetch(url, { ...restInit, headers, body });
+  let res = await fetch(url, { ...restInit, headers, body });
+  const canRetryAuth =
+    body === undefined ||
+    body === null ||
+    typeof body === "string" ||
+    body instanceof URLSearchParams ||
+    body instanceof ArrayBuffer ||
+    ArrayBuffer.isView(body);
+  if (res.status === 401 && TOKEN && !hasExplicitAuth && canRetryAuth) {
+    const retryHeaders = new Headers(headers);
+    if (authMode === "private-token") {
+      retryHeaders.delete("PRIVATE-TOKEN");
+      retryHeaders.set("Authorization", `Bearer ${TOKEN}`);
+      res = await fetch(url, { ...restInit, headers: retryHeaders, body });
+    } else if (authMode === "bearer") {
+      retryHeaders.delete("Authorization");
+      retryHeaders.set("PRIVATE-TOKEN", TOKEN);
+      res = await fetch(url, { ...restInit, headers: retryHeaders, body });
+    }
+  }
   const text = await res.text();
 
   if (!res.ok) {
@@ -353,4 +380,185 @@ export async function deleteIssueNote(input: {
     `/projects/${encodeURIComponent(String(input.projectId))}/issues/${input.issueIid}/notes/${input.noteId}`,
     { method: "DELETE" }
   );
+}
+
+/**
+ * List merge requests for a given project. Supports optional filtering by
+ * state (opened/closed/locked/merged) and a free-text search term.
+ * See https://docs.gitlab.com/api/merge_requests/#list-project-merge-requests.
+ */
+export async function listMergeRequests(input: {
+  projectId: string | number;
+  state?: string;
+  search?: string;
+}): Promise<any> {
+  const qs = new URLSearchParams();
+  if (input.state) qs.set("state", input.state);
+  if (input.search) qs.set("search", input.search);
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return apiFetch(
+    `/projects/${encodeURIComponent(String(input.projectId))}/merge_requests${suffix}`
+  );
+}
+
+/**
+ * Retrieve details of a single merge request within a project by providing
+ * the project ID and the merge request IID.
+ * See https://docs.gitlab.com/api/merge_requests/#get-single-mr.
+ */
+export async function getMergeRequest(input: {
+  projectId: string | number;
+  mergeRequestIid: number;
+}): Promise<any> {
+  return apiFetch(
+    `/projects/${encodeURIComponent(String(input.projectId))}/merge_requests/${input.mergeRequestIid}`
+  );
+}
+
+/**
+ * Retrieve the diffs/changes for a merge request (the file-by-file unified
+ * diff). See https://docs.gitlab.com/api/merge_requests/#get-single-mr-changes.
+ */
+export async function getMergeRequestChanges(input: {
+  projectId: string | number;
+  mergeRequestIid: number;
+}): Promise<any> {
+  return apiFetch(
+    `/projects/${encodeURIComponent(String(input.projectId))}/merge_requests/${input.mergeRequestIid}/changes`
+  );
+}
+
+/**
+ * List the individual diff entries (list version) for a merge request's
+ * versions. Useful for large diffs where /changes truncates.
+ * See https://docs.gitlab.com/api/merge_requests/#list-merge-request-diffs.
+ */
+export async function listMergeRequestDiffs(input: {
+  projectId: string | number;
+  mergeRequestIid: number;
+}): Promise<any> {
+  return apiFetch(
+    `/projects/${encodeURIComponent(String(input.projectId))}/merge_requests/${input.mergeRequestIid}/diffs`
+  );
+}
+
+/**
+ * List notes (comments) for a merge request.
+ * See https://docs.gitlab.com/api/notes/#list-all-merge-request-notes.
+ */
+export async function listMergeRequestNotes(input: {
+  projectId: string | number;
+  mergeRequestIid: number;
+  sort?: string;
+  orderBy?: string;
+}): Promise<any> {
+  const qs = new URLSearchParams();
+  if (input.sort) qs.set("sort", input.sort);
+  if (input.orderBy) qs.set("order_by", input.orderBy);
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return apiFetch(
+    `/projects/${encodeURIComponent(String(input.projectId))}/merge_requests/${input.mergeRequestIid}/notes${suffix}`
+  );
+}
+
+/**
+ * Add a new note (comment) to a merge request.
+ * See https://docs.gitlab.com/api/notes/#create-new-merge-request-note.
+ */
+export async function createMergeRequestNote(input: {
+  projectId: string | number;
+  mergeRequestIid: number;
+  body: string;
+  internal?: boolean;
+}): Promise<any> {
+  const payload: Record<string, any> = { body: input.body };
+  if (input.internal !== undefined) payload.internal = input.internal;
+  return apiFetch(
+    `/projects/${encodeURIComponent(String(input.projectId))}/merge_requests/${input.mergeRequestIid}/notes`,
+    { method: "POST", body: payload }
+  );
+}
+
+/**
+ * Retrieve a single work item (GitLab's unified issue/epic/task type) by
+ * its global ID or IID within a namespace. GitLab's public REST API does not
+ * yet expose work items directly, so this uses the GraphQL endpoint.
+ * See https://docs.gitlab.com/api/graphql/reference/#query-workitem.
+ */
+export async function getWorkItem(input: {
+  projectPath: string;
+  workItemIid: string | number;
+}): Promise<any> {
+  const query = `
+    query GetWorkItem($fullPath: ID!, $iid: String!) {
+      namespace(fullPath: $fullPath) {
+        workItems(iid: $iid) {
+          nodes {
+            id
+            iid
+            title
+            state
+            createdAt
+            updatedAt
+            workItemType { name }
+            description
+            widgets {
+              type
+              ... on WorkItemWidgetDescription {
+                description
+              }
+              ... on WorkItemWidgetAssignees {
+                assignees { nodes { username name } }
+              }
+              ... on WorkItemWidgetLabels {
+                labels { nodes { title } }
+              }
+              ... on WorkItemWidgetNotes {
+                discussions {
+                  nodes {
+                    notes { nodes { body author { username } createdAt } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+  const graphqlUrl = BASE.replace(/\/api\/v4\/?$/, "/api/graphql");
+  return graphqlFetch(graphqlUrl, query, {
+    fullPath: input.projectPath,
+    iid: String(input.workItemIid),
+  });
+}
+
+async function graphqlFetch(
+  url: string,
+  query: string,
+  variables: Record<string, unknown>
+): Promise<any> {
+  const headers = new Headers();
+  if (TOKEN) {
+    if (TOKEN.startsWith("glpat-")) {
+      headers.set("PRIVATE-TOKEN", TOKEN);
+    } else {
+      headers.set("Authorization", `Bearer ${TOKEN}`);
+    }
+  }
+  headers.set("Content-Type", "application/json");
+  const res = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ query, variables }),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`GitLab GraphQL error ${res.status}: ${text}`);
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
 }
