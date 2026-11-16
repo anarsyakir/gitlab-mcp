@@ -28,6 +28,7 @@ import {
   listMergeRequestNotes,
   createMergeRequestNote,
   getWorkItem,
+  uploadProjectFile,
 } from "./gitlab.js";
 
 const server = new McpServer(
@@ -108,6 +109,20 @@ server.registerTool(
 );
 
 server.registerTool(
+  "uploadProjectFile",
+  {
+    description:
+      "Upload a local file (e.g. a mockup PNG) to a project so it can be embedded in an issue or note. Returns `markdown` to paste into the description.",
+    inputSchema: {
+      projectId: z.string(),
+      filePath: z.string(),
+      fileName: z.string().optional(),
+    },
+  },
+  async (input) => jsonResult(await uploadProjectFile(input)),
+);
+
+server.registerTool(
   "createIssue",
   {
     description:
@@ -118,6 +133,7 @@ server.registerTool(
       description: z.string().optional(),
       labels: z.string().optional(),
       assigneeId: z.number().int().optional(),
+      milestoneId: z.number().int().optional(),
     },
   },
   async (input) => jsonResult(await createIssue(input)),
@@ -177,6 +193,7 @@ server.registerTool(
       stateEvent: z.enum(["close", "reopen"]).optional(),
       assigneeIds: z.array(z.number().int()).optional(),
       dueDate: z.string().optional(),
+      milestoneId: z.number().int().optional(),
     },
   },
   async (input) => jsonResult(await updateIssue(input)),

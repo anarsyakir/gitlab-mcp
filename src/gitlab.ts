@@ -204,10 +204,12 @@ export async function createIssue(input: {
   description?: string;
   labels?: string;
   assigneeId?: number;
+  milestoneId?: number;
 }): Promise<any> {
   const payload: Record<string, any> = {
     title: input.title,
   };
+  if (input.milestoneId !== undefined) payload.milestone_id = input.milestoneId;
   if (input.description) payload.description = input.description;
   if (input.labels) payload.labels = input.labels;
   if (input.assigneeId !== undefined) payload.assignee_ids = [input.assigneeId];
@@ -281,8 +283,10 @@ export async function updateIssue(input: {
   stateEvent?: string;
   assigneeIds?: number[];
   dueDate?: string;
+  milestoneId?: number;
 }): Promise<any> {
   const payload: Record<string, any> = {};
+  if (input.milestoneId !== undefined) payload.milestone_id = input.milestoneId;
   if (input.title !== undefined) payload.title = input.title;
   if (input.description !== undefined) payload.description = input.description;
   if (input.labels !== undefined) payload.labels = input.labels;
@@ -561,4 +565,37 @@ async function graphqlFetch(
   } catch {
     return text;
   }
+}
+
+/**
+ * Upload a local file to a project (POST /projects/:id/uploads) so it can be
+ * embedded in issue or note descriptions. Returns GitLab's response, including
+ * `markdown` (ready to paste, e.g. `![name](/uploads/...)`) and `full_path`.
+ * Uses Node's global fetch/FormData so the multipart body is sent as-is.
+ */
+export async function uploadProjectFile(input: {
+  projectId: string | number;
+  filePath: string;
+  fileName?: string;
+}): Promise<any> {
+  const { readFile } = await import("node:fs/promises");
+  const { basename } = await import("node:path");
+  const data = await readFile(input.filePath);
+  const name = input.fileName || basename(input.filePath);
+  const form = new globalThis.FormData();
+  form.append("file", new globalThis.Blob([data]), name);
+  const headers: Record<string, string> = {};
+  if (TOKEN) {
+    if (TOKEN.startsWith("glpat-")) headers["PRIVATE-TOKEN"] = TOKEN;
+    else headers["Authorization"] = `Bearer ${TOKEN}`;
+  }
+  const res = await globalThis.fetch(
+    `${BASE}/projects/${encodeURIComponent(String(input.projectId))}/uploads`,
+    { method: "POST", headers, body: form },
+  );
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`GitLab upload failed: ${res.status} ${res.statusText} - ${text}`);
+  }
+  return text ? JSON.parse(text) : {};
 }
